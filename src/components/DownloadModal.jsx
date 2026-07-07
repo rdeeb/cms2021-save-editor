@@ -1,6 +1,6 @@
 import { useState } from 'react'
 
-export default function DownloadModal({ onConfirm, onCancel }) {
+export default function DownloadModal({ onConfirm, onCancel, diff = [] }) {
   const [activePlatform, setActivePlatform] = useState('steam')
   const [dontShowAgain, setDontShowAgain] = useState(false)
 
@@ -17,6 +17,36 @@ export default function DownloadModal({ onConfirm, onCancel }) {
         <div className="modal-header">
           <h3>Save Download Instructions</h3>
           <p>Read where to place your file before proceeding.</p>
+        </div>
+
+        <div className="modal-body" style={{ paddingBottom: 0 }}>
+          <div className="modal-diff">
+            <div className="modal-diff-title">
+              About to write {diff.length === 0 ? 'no changes' : `${diff.length} change${diff.length === 1 ? '' : 's'}`}
+            </div>
+            {diff.length === 0 ? (
+              <div className="modal-diff-empty">
+                You haven't made any edits. The downloaded file will be byte-identical to the original.
+              </div>
+            ) : (
+              <ul className="modal-diff-list">
+                {diff.map((d, i) => (
+                  <li key={i} className="modal-diff-item">
+                    <span className="modal-diff-item-label">{d.label}</span>
+                    {d.bulk ? (
+                      <span className="modal-diff-bulk">{d.bulk}</span>
+                    ) : (
+                      <>
+                        <span className="modal-diff-item-from">{d.from}</span>
+                        <span className="modal-diff-arrow">→</span>
+                        <span className="modal-diff-item-to">{d.to}</span>
+                      </>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         </div>
 
         <div className="modal-tabs">

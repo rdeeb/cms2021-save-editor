@@ -6,7 +6,7 @@ import { decode, encode, parseStats, parseGarage, parseSkills, flattenParts, par
 
 // Load profile1.cms21b from the repo root
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const raw = readFileSync(join(__dirname, '../../profile1.cms21b'))
+const raw = readFileSync(join(__dirname, '../profile1.cms21b'))
 const arrayBuffer = raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength)
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -202,7 +202,7 @@ describe('applyEdits', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('robustness — profile2.cms21b (complex car data)', () => {
-  const p2raw = readFileSync(join(__dirname, '../../profile2.cms21b'))
+  const p2raw = readFileSync(join(__dirname, '../profile2.cms21b'))
   const p2ab  = p2raw.buffer.slice(p2raw.byteOffset, p2raw.byteOffset + p2raw.byteLength)
 
   it('decodes without crashing', () => {
@@ -237,7 +237,7 @@ describe('robustness — profile2.cms21b (complex car data)', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('robustness — profile0.cms21b (inventory parts)', () => {
-  const p0raw = readFileSync(join(__dirname, '../../profile0.cms21b'))
+  const p0raw = readFileSync(join(__dirname, '../profile0.cms21b'))
   const p0ab  = p0raw.buffer.slice(p0raw.byteOffset, p0raw.byteOffset + p0raw.byteLength)
 
   it('decodes without crashing', () => {
@@ -261,7 +261,7 @@ describe('robustness — profile0.cms21b (inventory parts)', () => {
 })
 
 describe('parseCars', () => {
-  const p2raw = readFileSync(join(__dirname, '../../profile2.cms21b'))
+  const p2raw = readFileSync(join(__dirname, '../profile2.cms21b'))
   const p2ab  = p2raw.buffer.slice(p2raw.byteOffset, p2raw.byteOffset + p2raw.byteLength)
 
   it('finds cars and their parts with conditions', () => {

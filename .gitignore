@@ -6,7 +6,7 @@ __pycache__/
 tmp/
 
 # Node
-web/node_modules/
-web/dist/
+node_modules/
+dist/
 
 *.cms21b

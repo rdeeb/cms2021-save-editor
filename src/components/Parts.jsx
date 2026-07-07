@@ -78,12 +78,13 @@ export default function Parts({ parts, onPartsChange }) {
         <div className="parts-empty" style={{ padding: '40px 24px' }}>
           <div style={{ fontSize: '32px', marginBottom: '12px' }}>📦</div>
           <div style={{ fontWeight: 600, color: 'var(--text)', marginBottom: '8px' }}>
-            No garage inventory parts
+            No loose inventory parts in this save
           </div>
-          <div style={{ maxWidth: '400px', margin: '0 auto', lineHeight: '1.7' }}>
-            This save file has no loose parts stored in the garage.
-            Parts installed on cars are stored separately in the save and are not yet editable here.
-            Try loading a save with items in the garage inventory.
+          <div style={{ maxWidth: '480px', margin: '0 auto', lineHeight: '1.7' }}>
+            This tab only shows parts that are sitting loose in your garage
+            storage. Parts already installed on a car are edited from the{' '}
+            <strong style={{ color: 'var(--text)' }}>Cars</strong> tab —
+            select a car there to repair its parts.
           </div>
         </div>
       ) : visibleParts.length === 0 ? (

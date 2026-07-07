@@ -1,0 +1,15 @@
+services:
+  cms2021-editor:
+    build: .
+    image: cms2021saveeditor:latest
+    container_name: cms2021saveeditor
+    restart: unless-stopped
+    ports:
+      - "5173:5173"
+    volumes:
+      - .:/app
+      - /app/node_modules
+    environment:
+      - NODE_ENV=development
+      - HOST=0.0.0.0
+      - PORT=5173

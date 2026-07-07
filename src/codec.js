@@ -41,7 +41,10 @@ const _utf8enc = new TextEncoder()
 
 // Byte patterns used for dynamic-offset lookups in the tail section
 // \x5c\xfe\xff\xff = last IEEE-754 NaN sentinel; \x00\x00\xf0\x41 = float32(30.0)
+// (Pre-1.0.30-ish format only.)
 const _STATS_ANCHOR   = new Uint8Array([0x5c, 0xfe, 0xff, 0xff, 0x00, 0x00, 0xf0, 0x41])
+// Shorter fallback anchor for newer save formats that dropped the NaN sentinel.
+const _STATS_ANCHOR_V2 = new Uint8Array([0x00, 0x00, 0xf0, 0x41])
 // uint32(23) + str8 "paintshop"  (23 = number of garage items)
 const _GARAGE_NEEDLE  = new Uint8Array([0x17, 0x00, 0x00, 0x00, 0x09,
                                         ..._utf8enc.encode('paintshop')])
@@ -304,11 +307,43 @@ function _parseHeader(data) {
   const month = data[10]
   const nl    = data[11]
   const name  = _utf8dec.decode(data.slice(12, 12 + nl))
-  let pos     = 12 + nl
+  const rawStart = 12 + nl
 
-  const rawStart = pos
-  while (pos < data.length && data[pos] !== 0xff) pos++
-  while (pos < data.length && data[pos] === 0xff) pos++
+  // Find the version string within the first ~256 bytes after the profile name.
+  // The version is the FIRST length-prefixed ASCII string that looks like
+  // "<digits>.<digits>..." possibly suffixed with letters (e.g. "1.0.10w",
+  // "1.0.39.hf1"). Cap the search so we don't scan into car-part data.
+  const verSearchEnd = Math.min(data.length - 1, rawStart + 256)
+  let verEnd = -1
+  for (let i = rawStart; i < verSearchEnd; i++) {
+    const n = data[i]
+    if (n < 3 || n > 16) continue
+    if (i + 1 + n > data.length) break
+    const slice = data.slice(i + 1, i + 1 + n)
+    if (!slice.every(b => b >= 32 && b < 127)) continue
+    const s = String.fromCharCode(...slice)
+    if (!/^\d+\.\d/.test(s)) continue
+    const stripped = s.replace(/[a-zA-Z]+\d*$/, '')
+    const parts    = stripped.split('.').filter(p => p !== '')
+    if (parts.length >= 2 && parts.every(p => /^\d+$/.test(p))) {
+      verEnd = i + 1 + n
+      break
+    }
+  }
+
+  // Determine where the header ends.
+  // - Old format (≤ 1.0.10w-ish): version is followed by 0xff padding, then
+  //   the parts section. End the header after the 0xff run.
+  // - New format (≥ 1.0.30-ish): no 0xff padding — end the header immediately
+  //   after the version string.
+  let pos
+  if (verEnd !== -1 && verEnd < data.length && data[verEnd] !== 0xff) {
+    pos = verEnd
+  } else {
+    pos = rawStart
+    while (pos < data.length && data[pos] !== 0xff) pos++
+    while (pos < data.length && data[pos] === 0xff) pos++
+  }
 
   const headerRaw = data.slice(rawStart, pos)
 
@@ -330,9 +365,10 @@ function _extractVersion(raw) {
       const b = raw.slice(i + 1, i + 1 + n)
       if (!b.every(x => x >= 32 && x < 127)) continue
       const s = String.fromCharCode(...b)
-      const stripped = s.replace(/[wWbB]+$/, '')
-      const parts    = stripped.split('.')
-      if (parts.length >= 2 && parts.filter(p => p !== '').every(p => /^\d+$/.test(p))) {
+      if (!/^\d+\.\d/.test(s)) continue
+      const stripped = s.replace(/[a-zA-Z]+\d*$/, '')
+      const parts    = stripped.split('.').filter(p => p !== '')
+      if (parts.length >= 2 && parts.every(p => /^\d+$/.test(p))) {
         return s
       }
     }
@@ -354,22 +390,66 @@ function _encodeHeader(hdr) {
 
 // ── Tail-section dynamic-offset helpers ───────────────────────────────────────
 
-function _tailStatsOffset(tail) {
-  const idx = _bytesLastIndexOf(tail, _STATS_ANCHOR)
-  if (idx === -1) throw new Error('Stats anchor not found — unexpected save format')
-  return idx + 17  // anchor(8) + float(4) + float(4) + 1 pad byte
+/**
+ * Locate the stats block.
+ *
+ * Returns:
+ *   { money, level, xp, layout: 'v1' } — old format (NaN sentinel + float30.0)
+ *   { money, level, xp, layout: 'v2' } — newer format (float30.0 only); offsets
+ *     are best-effort and any field whose value looks unreasonable is omitted.
+ *   null — neither anchor found.
+ */
+function _tailStatsOffsets(tail) {
+  const v1 = _bytesLastIndexOf(tail, _STATS_ANCHOR)
+  if (v1 !== -1) {
+    const off = v1 + 17  // anchor(8) + float(4) + float(4) + 1 pad byte
+    return { money: off, level: off + 4, xp: off + 8, layout: 'v1' }
+  }
+
+  // Newer format (≥ 1.0.30-ish): only the float32(30.0) marker remains.
+  // The block layout is the same as v1 — just shifted left by the missing
+  // 4-byte NaN sentinel:
+  //   [0..3]  float32(30.0)        (was bytes 4..7 of the v1 anchor)
+  //   [4..7]  float32              (gameplay value)
+  //   [8..11] float32              (gameplay value)
+  //   [12]    1-byte pad
+  //   [13..16] uint32  money
+  //   [17..20] uint32  level - 1
+  //   [21..24] uint32  xp
+  const v2 = _bytesLastIndexOf(tail, _STATS_ANCHOR_V2)
+  if (v2 === -1 || v2 + 25 > tail.length) return null
+  const view = new DataView(tail.buffer, tail.byteOffset)
+  const looksLikeStats = (mOff, lOff, xOff) => {
+    if (xOff + 4 > tail.length) return false
+    const m = view.getUint32(mOff, true)
+    const l = view.getUint32(lOff, true)
+    const x = view.getUint32(xOff, true)
+    return m <= 1_000_000_000 && l <= 200 && x <= 100_000_000
+  }
+  const candidates = [
+    // money / level-1 / xp offsets from anchor start
+    { m: 13, l: 17, x: 21 },  // v2 layout — old block with NaN sentinel stripped
+    { m: 8,  l: 12, x: 16 },  // fallback: shifted -5 if pad byte gone too
+  ]
+  for (const c of candidates) {
+    if (looksLikeStats(v2 + c.m, v2 + c.l, v2 + c.x)) {
+      return { money: v2 + c.m, level: v2 + c.l, xp: v2 + c.x, layout: 'v2' }
+    }
+  }
+  return null
 }
 
 function _tailGarageStateOffset(tail) {
   // Rather than a fixed needle, find "paintshop" and then back up to see the count.
   const pidx = _bytesIndexOf(tail, _utf8enc.encode('paintshop'))
-  if (pidx === -1) throw new Error('Garage section not found (no paintshop)')
-  
+  if (pidx === -1) return -1
+
   // The byte before is the length (9). Before that is the count (uint32).
   const goff = pidx - 1 - 4
+  if (goff < 0) return -1
   const view = new DataView(tail.buffer, tail.byteOffset)
   const count = view.getUint32(goff, true)
-  
+
   let pos = goff + 4  // skip count uint32
   // Skip over all names (length-prefixed)
   for (let i = 0; i < count; i++) {
@@ -382,19 +462,21 @@ function _tailGarageStateOffset(tail) {
 
 function _tailSkillPointsOffset(tail) {
   const goff = _bytesIndexOf(tail, _GARAGE_NEEDLE)
-  if (goff === -1) throw new Error('Garage section not found in save')
+  if (goff === -1) return -1
   return goff - 4
 }
 
 function _tailSkillsOffset(tail) {
   const idx = _bytesIndexOf(tail, _SKILL_NEEDLE)
-  if (idx === -1) throw new Error('Skills section not found in save')
+  if (idx === -1) return -1
   return idx - 1 - 4  // back over the name-length byte and the count uint32
 }
 
 function _parseTailSkills(tail) {
+  const startPos = _tailSkillsOffset(tail)
+  if (startPos === -1) return []
   const view = new DataView(tail.buffer, tail.byteOffset)
-  let pos    = _tailSkillsOffset(tail)
+  let pos    = startPos
   const count = view.getUint32(pos, true)
   pos += 4
 
@@ -419,8 +501,10 @@ function _parseTailSkills(tail) {
 
 function _encodeTailSkills(tail, skills) {
   const buf  = new Uint8Array(tail)  // copy
+  const startPos = _tailSkillsOffset(buf)
+  if (startPos === -1) return buf
   const view = new DataView(buf.buffer)
-  let pos    = _tailSkillsOffset(buf)
+  let pos    = startPos
   const count = view.getUint32(pos, true)
   pos += 4
 
@@ -538,22 +622,33 @@ export function encode(save) {
 export function parseStats(save) {
   const tail = _hexToBytes(save._tail_raw)
   const view = new DataView(tail.buffer)
-  const off  = _tailStatsOffset(tail)
+  const offs = _tailStatsOffsets(tail)
+  const spOff = _tailSkillPointsOffset(tail)
+  const hasMLX = offs !== null
+  const hasSP  = spOff !== -1 && spOff + 4 <= tail.length
   return {
-    money:        view.getUint32(off,     true),
-    level:        view.getUint32(off + 4, true) + 1,  // stored as level - 1
-    xp:           view.getUint32(off + 8, true),
-    skill_points: view.getUint32(_tailSkillPointsOffset(tail), true),
+    money:        hasMLX ? view.getUint32(offs.money, true) : 0,
+    level:        hasMLX ? view.getUint32(offs.level, true) + 1 : 1,
+    xp:           hasMLX ? view.getUint32(offs.xp,    true) : 0,
+    skill_points: hasSP  ? view.getUint32(spOff,      true) : 0,
+    _supports: {
+      money: hasMLX,
+      level: hasMLX,
+      xp: hasMLX,
+      skill_points: hasSP,
+    },
+    _layout: hasMLX ? offs.layout : null,
   }
 }
 
 export function parseGarage(save) {
   const tail = _hexToBytes(save._tail_raw)
   const base = _tailGarageStateOffset(tail)
+  if (base === -1) return []
   return _GARAGE_NAMES.map((name, i) => {
     const off = base + i * 8
     const raw = Array.from(tail.slice(off, off + 8))
-    return { name, state: raw[0], raw }
+    return { name, state: raw[0] ?? 0, raw }
   })
 }
 
@@ -668,12 +763,15 @@ export function applyEdits(save, { stats, partEdits = [], garageEdits = [], skil
     report(30, 'Applying stats…')
     const tail = _hexToBytes(save._tail_raw)
     const view = new DataView(tail.buffer)
-    const off  = _tailStatsOffset(tail)
-    view.setUint32(off,     stats.money,               true)
-    view.setUint32(off + 4, Math.max(0, stats.level - 1), true)
-    view.setUint32(off + 8, stats.xp,                  true)
-    if (stats.skill_points !== undefined) {
-      view.setUint32(_tailSkillPointsOffset(tail), stats.skill_points, true)
+    const offs = _tailStatsOffsets(tail)
+    if (offs) {
+      if (stats.money !== undefined) view.setUint32(offs.money, stats.money, true)
+      if (stats.level !== undefined) view.setUint32(offs.level, Math.max(0, stats.level - 1), true)
+      if (stats.xp    !== undefined) view.setUint32(offs.xp,    stats.xp,    true)
+    }
+    const spOff = _tailSkillPointsOffset(tail)
+    if (stats.skill_points !== undefined && spOff !== -1 && spOff + 4 <= tail.length) {
+      view.setUint32(spOff, stats.skill_points, true)
     }
     save._tail_raw = _bytesToHex(tail)
   }
@@ -690,10 +788,15 @@ export function applyEdits(save, { stats, partEdits = [], garageEdits = [], skil
   if (garageEdits.length > 0) {
     const tail = _hexToBytes(save._tail_raw)
     const base = _tailGarageStateOffset(tail)
-    for (const edit of garageEdits) {
-      tail[base + edit.idx * 8] = Math.max(0, Math.min(255, edit.state))
+    if (base !== -1) {
+      for (const edit of garageEdits) {
+        const target = base + edit.idx * 8
+        if (target >= 0 && target < tail.length) {
+          tail[target] = Math.max(0, Math.min(255, edit.state))
+        }
+      }
+      save._tail_raw = _bytesToHex(tail)
     }
-    save._tail_raw = _bytesToHex(tail)
   }
 
   // ── Skills ──────────────────────────────────────────────────────────────────

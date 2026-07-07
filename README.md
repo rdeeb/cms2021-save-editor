@@ -77,7 +77,7 @@ You only need **Node.js 18+**. No Python required.
 
 ```bash
 git clone https://github.com/your-username/cms2021-save-editor.git
-cd cms2021-save-editor/web
+cd cms2021-save-editor
 npm install
 npm run dev
 ```
@@ -87,11 +87,10 @@ Then open **http://localhost:5173** in your browser.
 ### Building for production
 
 ```bash
-cd web
 npm run build
 ```
 
-The `web/dist/` folder is a self-contained static site — host it anywhere (GitHub Pages, Netlify, Cloudflare Pages, etc.).
+The `dist/` folder is a self-contained static site — host it anywhere (GitHub Pages, Netlify, Cloudflare Pages, etc.).
 
 ---
 
@@ -118,13 +117,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - run: npm install
-        working-directory: web
+      - run: npm ci
       - run: npm run build
-        working-directory: web
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: web/dist
+          path: dist
       - uses: actions/deploy-pages@v4
 ```
 
@@ -136,29 +133,38 @@ Every push to `main` will automatically rebuild and publish the site.
 
 ```
 cms2021-save-editor/
-└── web/                        # The entire application (static React + Vite)
-    ├── src/
-    │   ├── codec.js            # Binary decoder / encoder (pure JS, no dependencies)
-    │   ├── App.jsx             # Main app — state, file handling, download
-    │   ├── App.css
-    │   └── components/
-    │       ├── DropZone.jsx
-    │       ├── Overview.jsx
-    │       ├── Garage.jsx
-    │       └── Parts.jsx
-    ├── index.html
-    ├── vite.config.js
-    └── package.json
+├── src/                        # React + Vite app sources
+│   ├── codec.js                # Binary decoder / encoder (pure JS, no deps)
+│   ├── codec.worker.js         # Web Worker wrapper for off-thread decode
+│   ├── App.jsx                 # Main app — state, file handling, download
+│   ├── App.css
+│   ├── main.jsx
+│   └── components/
+│       ├── DropZone.jsx
+│       ├── Overview.jsx
+│       ├── Garage.jsx
+│       ├── Parts.jsx
+│       ├── Skills.jsx
+│       ├── Cars.jsx
+│       ├── Tooltip.jsx
+│       └── DownloadModal.jsx
+├── python-cli/                 # Legacy Python CLI (optional, see below)
+│   ├── decode.py
+│   └── editor.py
+├── index.html
+├── vite.config.js
+└── package.json
 ```
 
-> `decode.py` and `editor.py` in the repo root are a legacy Python CLI tool for
-> power users who prefer the command line. They are not needed to run the web app.
+> `python-cli/decode.py` and `python-cli/editor.py` are a legacy Python CLI for
+> power users who prefer the command line. They are not needed to run the web
+> app and currently lack the v1.0.39+ save format fixes that the JS codec has.
 
 ---
 
 ## Binary format notes
 
-The `.cms21b` format uses little-endian integers, IEEE-754 floats, and length-prefixed UTF-8 strings (1-byte length + data). See `web/src/codec.js` for the full annotated implementation.
+The `.cms21b` format uses little-endian integers, IEEE-754 floats, and length-prefixed UTF-8 strings (1-byte length + data). See `src/codec.js` for the full annotated implementation.
 
 **File structure:**
 ```
